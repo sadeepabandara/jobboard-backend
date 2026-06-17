@@ -3,15 +3,20 @@ import { PrismaClient } from "@prisma/client";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import cors from "cors";
 import { authenticateToken, AuthRequest } from "./middleware/auth";
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
-const PORT = 3000;
+const PORT = 4000;
 
 app.use(express.json());
+app.use(cors({
+  origin: ["http://localhost:5173", "https://jobboard-frontend-alpha.vercel.app"],
+  credentials: true,
+}));
 
 app.get("/", (req, res) => {
   res.send("Job Board API is running");
