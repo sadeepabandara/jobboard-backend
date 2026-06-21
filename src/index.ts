@@ -5,6 +5,8 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import cors from "cors";
 import { authenticateToken, AuthRequest } from "./middleware/auth";
+import multer from "multer";
+import { uploadToS3 } from "./utils/s3";
 
 dotenv.config();
 
@@ -17,6 +19,8 @@ app.use(cors({
   origin: ["http://localhost:5173", "https://jobboard-frontend-alpha.vercel.app"],
   credentials: true,
 }));
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.get("/", (req, res) => {
   res.send("Job Board API is running");
@@ -126,34 +130,51 @@ app.get("/jobs", async (req, res) => {
   }
 });
 
-// Apply to a job (requires login)
-app.post("/applications", authenticateToken, async (req: AuthRequest, res) => {
-  try {
-    const { job_id } = req.body;
+// Apply to a job (requires login, with resume upload)
+app.post(
+  "/applications",
+  authenticateToken,
+  upload.single("resume"),
+  async (req: AuthRequest, res) => {
+    try {
+      const { job_id } = req.body;
 
-    if (!job_id) {
-      return res.status(400).json({ error: "job_id is required" });
+      if (!job_id) {
+        return res.status(400).json({ error: "job_id is required" });
+      }
+
+      // Check job exists
+      const job = await prisma.jobs.findUnique({ where: { id: Number(job_id) } });
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      let resumeUrl: string | null = null;
+
+      // If a file was uploaded, send it to S3
+      if (req.file) {
+        resumeUrl = await uploadToS3(
+          req.file.buffer,
+          req.file.originalname,
+          req.file.mimetype
+        );
+      }
+
+      const application = await prisma.applications.create({
+        data: {
+          job_id: Number(job_id),
+          user_id: req.userId!,
+          resume_url: resumeUrl,
+        },
+      });
+
+      res.status(201).json(application);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Something went wrong" });
     }
-
-    // Check job exists
-    const job = await prisma.jobs.findUnique({ where: { id: job_id } });
-    if (!job) {
-      return res.status(404).json({ error: "Job not found" });
-    }
-
-    const application = await prisma.applications.create({
-      data: {
-        job_id,
-        user_id: req.userId!,
-      },
-    });
-
-    res.status(201).json(application);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Something went wrong" });
   }
-});
+);
 
 // Get my applications (requires login)
 app.get("/applications", authenticateToken, async (req: AuthRequest, res) => {
